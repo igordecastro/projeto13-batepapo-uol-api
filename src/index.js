@@ -42,9 +42,19 @@ app.get("/participants", async (req, res) => {
 });
 
 app.get("/messages", async (req, res) => {
+  const user = req.headers.user;
+  const limit = parseInt(req.query.limit);
+
   try {
-    const messages = await db.collection("messages").find({}).toArray();
-    res.send(messages);
+    const messages = await db
+      .collection("messages")
+      .find({ $or: [{ type: "message" }, { to: user }, { to: "Todos" }] })
+      .toArray();
+    if (limit) {
+      return res.send(messages.slice(-limit));
+    } else {
+      return res.send(messages);
+    }
   } catch (err) {
     console.log(err);
     res.sendStatus(500);
@@ -56,24 +66,26 @@ app.post("/participants", async (req, res) => {
   const { error } = schemaParticipant.validate(participant, {
     abortEarly: false,
   });
-  const participantAlreadyExists = await db.collection("participants").findOne({name: participant.name})
+  const participantAlreadyExists = await db
+    .collection("participants")
+    .findOne({ name: participant.name });
 
   if (error) {
     const erros = error.details.map((detail) => detail.message);
     res.status(422).send(erros);
     return;
   }
-  
-  if(participantAlreadyExists) {
-    return res.sendStatus(409)
+
+  if (participantAlreadyExists) {
+    return res.sendStatus(409);
   }
 
   await db.collection("participants").insertOne({
-    name: req.body.name,
+    name: participant.name,
     lastStatus: Date.now(),
   });
   db.collection("messages").insertOne({
-    from: req.body.name,
+    from: participant.name,
     to: "Todos",
     text: "entra na sala...",
     type: "status",
@@ -88,9 +100,11 @@ app.post("/messages", async (req, res) => {
   const { error } = schemaMessage.validate(message, {
     abortEarly: false,
   });
-  const userExists = await db.collection("participants").findOne({name: user})
+  const userExists = await db
+    .collection("participants")
+    .findOne({ name: user });
 
-  if(!userExists) {
+  if (!userExists) {
     res.sendStatus(422);
     return;
   }
@@ -103,10 +117,55 @@ app.post("/messages", async (req, res) => {
   await db.collection("messages").insertOne({
     ...message,
     from: user,
-    time: dayjs().format("hh:mm:ss")
+    time: dayjs().format("hh:mm:ss"),
   });
 
   res.sendStatus(201);
 });
 
+app.post("/status", async (req, res) => {
+  const user = req.headers.user;
+  const userExists = await db
+    .collection("participants")
+    .findOne({ name: user });
+
+  if (!userExists) {
+    return res.sendStatus(404);
+  } else {
+    await db.collection("participants").updateOne(
+      {
+        name: userExists.name,
+      },
+      { $set: { ...userExists, lastStatus: Date.now() } }
+    );
+  }
+  res.sendStatus(200);
+});
+try {
+  const participants = await db.collection("participants").find({}).toArray();
+
+  console.log(participants);
+} catch (err) {
+  console.log(err);
+  res.sendStatus(500);
+}
+setInterval(async () => {
+  const participants = await db.collection("participants").find({}).toArray();
+  participants.length !== 0 
+  &&
+  participants.map((participant) => {
+    if (participant.lastStatus < Date.now() - 10000);
+    {
+      db.collection("messages").insertOne({
+        from: participant.name,
+        to: "Todos",
+        text: "sai da sala...",
+        type: "status",
+        time: dayjs().format("hh:mm:ss"),
+      });
+      db.collection("participants").deleteOne({name: participant.name})
+    }
+  })
+  ;
+}, 15 * 1000);
 app.listen(5000, () => console.log("Running in port 5000"));
