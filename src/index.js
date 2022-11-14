@@ -22,10 +22,12 @@ const schemaMessage = Joi.object({
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let db;
+let participants;
 
 try {
   await mongoClient.connect();
   db = mongoClient.db("batePapoUol");
+  participants = await db.collection("participants").find({}).toArray();
 } catch (err) {
   console.log(err);
 }
@@ -91,6 +93,7 @@ app.post("/participants", async (req, res) => {
     type: "status",
     time: dayjs().format("hh:mm:ss"),
   });
+
   res.sendStatus(201);
 });
 
@@ -109,8 +112,8 @@ app.post("/messages", async (req, res) => {
     return;
   }
   if (error) {
-    const erros = error.details.map((detail) => detail.message);
-    res.status(422).send(erros);
+    const errors = error.details.map((detail) => detail.message);
+    res.status(422).send(errors);
     return;
   }
 
@@ -119,7 +122,6 @@ app.post("/messages", async (req, res) => {
     from: user,
     time: dayjs().format("hh:mm:ss"),
   });
-
   res.sendStatus(201);
 });
 
@@ -141,31 +143,28 @@ app.post("/status", async (req, res) => {
   }
   res.sendStatus(200);
 });
-try {
-  const participants = await db.collection("participants").find({}).toArray();
 
-  console.log(participants);
-} catch (err) {
-  console.log(err);
-  res.sendStatus(500);
+async function removeInactiveUsers() {
+  participants = await db.collection("participants").find({}).toArray();
+  participants.length !== 0 &&
+    participants.forEach(async (participant) => {
+      const now = Date.now()
+      if (now >= (participant.lastStatus + 10000));
+      {
+         await db
+          .collection("participants")
+          .deleteOne({ name: participant.name });
+         await db.collection("messages").insertOne({
+          from: participant.name,
+          to: "Todos",
+          text: "sai da sala...",
+          type: "status",
+          time: dayjs().format("hh:mm:ss"),
+        });
+      }
+    });
 }
-setInterval(async () => {
-  const participants = await db.collection("participants").find({}).toArray();
-  participants.length !== 0 
-  &&
-  participants.map((participant) => {
-    if (participant.lastStatus < Date.now() - 10000);
-    {
-      db.collection("messages").insertOne({
-        from: participant.name,
-        to: "Todos",
-        text: "sai da sala...",
-        type: "status",
-        time: dayjs().format("hh:mm:ss"),
-      });
-      db.collection("participants").deleteOne({name: participant.name})
-    }
-  })
-  ;
-}, 15 * 1000);
+
+setInterval(removeInactiveUsers, 15 * 1000);
+
 app.listen(5000, () => console.log("Running in port 5000"));
